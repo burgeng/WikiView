@@ -32,6 +32,7 @@ blocked_language_pages = {
     "Hanyu_Pinyin",
     "Literal_translation",
 }
+
 """
 Compute the communities within the graph, 
 """
@@ -284,9 +285,9 @@ def crawl_wikipedia(seed, depth=2, max_links_per_page=20):
 
                 visited.add(link)
 
-                queue.append(
-                    (link, current_depth + 1)
-                )
+                # Add the page link to the queue, with a depth of current_depth+1
+                queue.append((link, current_depth + 1))
+
 
     return G
 
@@ -303,7 +304,7 @@ SEED_LABEL = sys.argv[1]
 G = crawl_wikipedia(
     seed=str(SEED_LABEL),
     depth=4,
-    max_links_per_page=30
+    max_links_per_page=20
 )
 
 G = prune_low_degree_nodes(G, min_total_degree=1)
