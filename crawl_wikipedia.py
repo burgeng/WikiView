@@ -77,17 +77,6 @@ def compute_community_weighted_layout(G):
 
 def export_graph_to_json(G, filename="wiki_graph.json"):
 
-    # Compute PageRank
-    pagerank = nx.pagerank(G)
-
-    # Compute graph layout positions
-    pos = nx.spring_layout(
-        G,
-        k=0.5,
-        iterations=100,
-        seed=42
-    )
-
     data = {
         "nodes": [],
         "links": []
@@ -104,7 +93,6 @@ def export_graph_to_json(G, filename="wiki_graph.json"):
             "id": node,
             "label": unquote(node).replace("_", " "),
             "url": f"https://en.wikipedia.org/wiki/{node}",
-            "pagerank": pagerank.get(node, 0),
             "community": community_map.get(node, -1),
             "isSeed": SEED_LABEL == node,
             # precomputed coordinates
@@ -295,16 +283,18 @@ def crawl_wikipedia(seed, depth=2, max_links_per_page=20):
 # ----------------------------------------
 # Run crawler
 # ----------------------------------------
-if len(sys.argv) != 2:
-    print("Usage:\tcrawl_wikipedia.py <seed page>")
+if len(sys.argv) != 4:
+    print("Usage:\tcrawl_wikipedia.py <seed page> <depth> <max links per page>")
     sys.exit(1)
 
-SEED_LABEL = sys.argv[1]
+SEED_LABEL = unquote(sys.argv[1]).strip().replace(" ", "_")
+DEPTH = int(sys.argv[2])
+MAX_LINKS = int(sys.argv[3])
 
 G = crawl_wikipedia(
     seed=str(SEED_LABEL),
-    depth=4,
-    max_links_per_page=20
+    depth=DEPTH,
+    max_links_per_page=MAX_LINKS
 )
 
 G = prune_low_degree_nodes(G, min_total_degree=1)
