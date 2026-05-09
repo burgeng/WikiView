@@ -1,3 +1,6 @@
+##### TODO:
+# Re-evaluate JSON write format/process, currently bottleneck+annoyingly slow
+
 import requests
 from bs4 import BeautifulSoup
 from collections import deque
@@ -32,6 +35,18 @@ blocked_language_pages = {
     "Hanyu_Pinyin",
     "Literal_translation",
 }
+
+def update_status(pages_crawled, pages_seen, depth, max_depth, queue_size, max_pages, page):
+    msg = (
+        f"depth={depth:<2}/{max_depth:<2} "
+        f"crawled={pages_crawled:<5}/{max_pages:<5} "
+        f"seen={pages_seen:<6} "
+        f"queue={queue_size:<6} "
+        f"page={page[:50]:<50}"
+    )
+
+    sys.stdout.write("\r" + msg.ljust(120))
+    sys.stdout.flush()
 
 """
 Compute the communities within the graph, 
@@ -76,6 +91,7 @@ def compute_community_weighted_layout(G):
     return pos, community_map
 
 def export_graph_to_json(G, filename="wiki_graph.json"):
+    print("Writing graph definition...")
 
     data = {
         "nodes": [],
@@ -181,13 +197,14 @@ def should_skip_page(page, current_title, seed, block_language_pages=True):
 # ----------------------------------------
 # Get Wikipedia links from a page
 # ----------------------------------------
-def get_links(title, max_links=20):
+def get_links(title):
 
     url = f"https://en.wikipedia.org/wiki/{title}"
+    if title == SEED_LABEL:
+        print("SEED: ", title)
 
     try:
         response = requests.get(url, timeout=10, headers=headers)
-        print(f"Response for title {title}: {response}")
         if response.status_code != 200:
             return []
 
@@ -214,9 +231,6 @@ def get_links(title, max_links=20):
 
             links.add(page)
 
-            if len(links) >= max_links:
-                break
-
         return list(links)
 
     except Exception as e:
@@ -231,7 +245,7 @@ Breadth-first search wikipedia crawler.
 @param depth: number of hops away from seed page to expand to
 @param man_links_per_page: max number of links to consider per page
 """
-def crawl_wikipedia(seed, depth=2, max_links_per_page=20):
+def crawl_wikipedia(seed, depth=2):
 
     # Directed graph
     G = nx.DiGraph()
@@ -251,17 +265,24 @@ def crawl_wikipedia(seed, depth=2, max_links_per_page=20):
 
         current_page, current_depth = queue.popleft()
 
-        print(f"[Depth {current_depth}] Crawling: {current_page}")
+        update_status(
+            pages_crawled=len(visited),
+            pages_seen=len(visited) + len(queue),
+            depth=current_depth,
+            max_depth=depth,
+            queue_size=len(queue),
+            max_pages="∞",
+            page=current_page
+        )
+
+        #print(f"[Depth {current_depth}] Crawling: {current_page}")
 
         # Stop expanding beyond depth limit
         if current_depth >= depth:
             continue
 
         # Get outgoing links from current_page
-        links = get_links(
-            current_page,
-            max_links=max_links_per_page
-        )
+        links = get_links(current_page)
 
         for link in links:
 
@@ -283,21 +304,19 @@ def crawl_wikipedia(seed, depth=2, max_links_per_page=20):
 # ----------------------------------------
 # Run crawler
 # ----------------------------------------
-if len(sys.argv) != 4:
-    print("Usage:\tcrawl_wikipedia.py <seed page> <depth> <max links per page>")
+if len(sys.argv) != 3:
+    print("Usage:\tcrawl_wikipedia.py <seed page> <depth>")
     sys.exit(1)
 
 SEED_LABEL = unquote(sys.argv[1]).strip().replace(" ", "_")
 DEPTH = int(sys.argv[2])
-MAX_LINKS = int(sys.argv[3])
 
 G = crawl_wikipedia(
     seed=str(SEED_LABEL),
-    depth=DEPTH,
-    max_links_per_page=MAX_LINKS
+    depth=DEPTH
 )
 
-G = prune_low_degree_nodes(G, min_total_degree=1)
+#G = prune_low_degree_nodes(G, min_total_degree=1)
 
 export_graph_to_json(G, "wiki_graph.json")
 
