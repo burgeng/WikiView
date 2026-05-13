@@ -8,7 +8,8 @@ import networkx as nx
 import json
 from urllib.parse import unquote
 from networkx.algorithms.community import greedy_modularity_communities
-import math
+import orjson
+import time
 import sys
 
 headers = {
@@ -52,6 +53,8 @@ def update_status(pages_crawled, pages_seen, depth, max_depth, queue_size, max_p
 Compute the communities within the graph, 
 """
 def compute_community_weighted_layout(G):
+    print("Computing graph layout...")
+    start = time.perf_counter()
     undirected = G.to_undirected()
 
     communities = list(greedy_modularity_communities(undirected))
@@ -76,7 +79,7 @@ def compute_community_weighted_layout(G):
     pos = nx.spring_layout(
         H,
         k=0.8,
-        iterations=300,
+        iterations=50,
         seed=42,
         weight="weight"
     )
@@ -88,10 +91,12 @@ def compute_community_weighted_layout(G):
         if not str(node).startswith("__community_")
     }
 
+    end = time.perf_counter()
+    print(f"Graph creation took {end - start:.2f} seconds")
+
     return pos, community_map
 
 def export_graph_to_json(G, filename="wiki_graph.json"):
-    print("Writing graph definition...")
 
     data = {
         "nodes": [],
@@ -100,11 +105,12 @@ def export_graph_to_json(G, filename="wiki_graph.json"):
 
     pos, community_map = compute_community_weighted_layout(G)
 
+    print("Writing graph to JSON...")
+    start = time.perf_counter()
     # Add nodes
     for node in G.nodes():
 
         x, y = pos[node]
-        print(SEED_LABEL, ": ", node)
         data["nodes"].append({
             "id": node,
             "label": unquote(node).replace("_", " "),
@@ -126,14 +132,11 @@ def export_graph_to_json(G, filename="wiki_graph.json"):
 
     # Write JSON file
     with open(filename, "w", encoding="utf-8") as f:
-        json.dump(
-            data,
-            f,
-            indent=2,
-            ensure_ascii=False
-        )
+        f.write(orjson.dumps(data))
 
-    print(f"Exported graph to {filename}")
+    end  = time.perf_counter()
+
+    print(f"Exported graph to {filename}, took {end - start:.2f} seconds")
 
 
 def add_communities(G):
@@ -153,6 +156,8 @@ def prune_low_degree_nodes(G, min_total_degree=2):
     Removes nodes whose total degree is below min_total_degree.
     For directed graphs, total degree = in_degree + out_degree.
     """
+    start = time.perf_counter()
+    print(f"Removing nodes with total degree <= {min_total_degree}")
 
     nodes_to_remove = [
         node
@@ -164,6 +169,9 @@ def prune_low_degree_nodes(G, min_total_degree=2):
 
     G_pruned = G.copy()
     G_pruned.remove_nodes_from(nodes_to_remove)
+
+    end = time.perf_counter()
+    print(f"Time to remove low-degree nodes: {end - start:.2f}")
 
     return G_pruned
 
@@ -256,6 +264,8 @@ def crawl_wikipedia(seed, depth=2):
     # Track visited pages
     visited = set()
 
+    crawled_count = 0
+
     # Start with seed page
     queue.append((seed, 0))
     visited.add(seed)
@@ -265,9 +275,11 @@ def crawl_wikipedia(seed, depth=2):
 
         current_page, current_depth = queue.popleft()
 
+        crawled_count+=1
+
         update_status(
-            pages_crawled=len(visited),
-            pages_seen=len(visited) + len(queue),
+            pages_crawled=crawled_count,
+            pages_seen=len(visited),
             depth=current_depth,
             max_depth=depth,
             queue_size=len(queue),
@@ -316,7 +328,7 @@ G = crawl_wikipedia(
     depth=DEPTH
 )
 
-#G = prune_low_degree_nodes(G, min_total_degree=1)
+G = prune_low_degree_nodes(G, min_total_degree=2)
 
 export_graph_to_json(G, "wiki_graph.json")
 
