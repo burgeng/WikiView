@@ -73,12 +73,12 @@ def compute_community_weighted_layout(G):
         H.add_node(center)
 
         for node in community:
-            H.add_edge(center, node, weight=4.5) # high-weight edge that will pull connected nodes closer together 
+            H.add_edge(center, node, weight=10) # high-weight edge that will pull connected nodes closer together 
 
     # get positions of nodes treating edges as rsprings, higher weight = tighter spring
     pos = nx.spring_layout(
         H,
-        k=0.8,
+        #k=0.8,             # node distance, if none calculated as 1/sqrt(len(nodes))
         iterations=50,
         seed=42,
         weight="weight"
@@ -131,25 +131,12 @@ def export_graph_to_json(G, filename="wiki_graph.json"):
         })
 
     # Write JSON file
-    with open(filename, "w", encoding="utf-8") as f:
+    with open(filename, "wb") as f:
         f.write(orjson.dumps(data))
 
     end  = time.perf_counter()
 
     print(f"Exported graph to {filename}, took {end - start:.2f} seconds")
-
-
-def add_communities(G):
-    undirected = G.to_undirected()
-    communities = greedy_modularity_communities(undirected)
-
-    community_map = {}
-
-    for i, community in enumerate(communities):
-        for node in community:
-            community_map[node] = i
-
-    return community_map
 
 def prune_low_degree_nodes(G, min_total_degree=2):
     """
@@ -205,7 +192,7 @@ def should_skip_page(page, current_title, seed, block_language_pages=True):
 # ----------------------------------------
 # Get Wikipedia links from a page
 # ----------------------------------------
-def get_links(title):
+def get_links(title, max_links):
 
     url = f"https://en.wikipedia.org/wiki/{title}"
     if title == SEED_LABEL:
@@ -236,7 +223,9 @@ def get_links(title):
             ):
                 #print("Skipping", page)
                 continue
-
+            
+            if len(links) >= max_links:
+                return list(links)
             links.add(page)
 
         return list(links)
@@ -244,7 +233,9 @@ def get_links(title):
     except Exception as e:
         print(f"Error fetching {title}: {e}")
         return []
-
+    
+def page_key(title):
+    return unquote(title).strip().replace(" ", "_").lower()
 
 """
 Breadth-first search wikipedia crawler.
@@ -253,7 +244,7 @@ Breadth-first search wikipedia crawler.
 @param depth: number of hops away from seed page to expand to
 @param man_links_per_page: max number of links to consider per page
 """
-def crawl_wikipedia(seed, depth=2):
+def crawl_wikipedia(seed, depth=2, max_links=50):
 
     # Directed graph
     G = nx.DiGraph()
@@ -268,7 +259,7 @@ def crawl_wikipedia(seed, depth=2):
 
     # Start with seed page
     queue.append((seed, 0))
-    visited.add(seed)
+    visited.add(page_key(seed)) # Normalize page name so that we don't visit seed page twice
 
     # while there are page(s) in the queue
     while queue:
@@ -294,17 +285,19 @@ def crawl_wikipedia(seed, depth=2):
             continue
 
         # Get outgoing links from current_page
-        links = get_links(current_page)
+        links = get_links(current_page, max_links)
 
         for link in links:
 
             # Add edge to graph
             G.add_edge(current_page, link)
 
-            # Add unseen pages to BFS queue
-            if link not in visited:
+            key = page_key(link)
 
-                visited.add(link)
+            # Add unseen pages to BFS queue
+            if key not in visited:
+
+                visited.add(key)
 
                 # Add the page link to the queue, with a depth of current_depth+1
                 queue.append((link, current_depth + 1))
@@ -316,16 +309,18 @@ def crawl_wikipedia(seed, depth=2):
 # ----------------------------------------
 # Run crawler
 # ----------------------------------------
-if len(sys.argv) != 3:
-    print("Usage:\tcrawl_wikipedia.py <seed page> <depth>")
+if len(sys.argv) != 4:
+    print("Usage:\tcrawl_wikipedia.py <seed page> <depth> <max links per page>")
     sys.exit(1)
 
 SEED_LABEL = unquote(sys.argv[1]).strip().replace(" ", "_")
 DEPTH = int(sys.argv[2])
+MAX_LINKS = int(sys.argv[3])
 
 G = crawl_wikipedia(
     seed=str(SEED_LABEL),
-    depth=DEPTH
+    depth=DEPTH,
+    max_links=MAX_LINKS
 )
 
 G = prune_low_degree_nodes(G, min_total_degree=2)
