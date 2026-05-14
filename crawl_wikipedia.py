@@ -307,7 +307,6 @@ def crawl_wikipedia(seed, depth=2, max_links=50):
                 # Add the page link to the queue, with a depth of current_depth+1
                 queue.append((link, current_depth + 1))
 
-
     return G
 
 
