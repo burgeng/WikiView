@@ -103,6 +103,10 @@ def export_graph_to_json(G, filename="wiki_graph.json"):
         "links": []
     }
 
+    # Testing writing to dedicated viewer format
+    nx.write_gexf(G, "wiki_graph.gexf")
+
+    """
     pos, community_map = compute_community_weighted_layout(G)
 
     print("Writing graph to JSON...")
@@ -137,6 +141,7 @@ def export_graph_to_json(G, filename="wiki_graph.json"):
     end  = time.perf_counter()
 
     print(f"Exported graph to {filename}, took {end - start:.2f} seconds")
+    """
 
 def prune_low_degree_nodes(G, min_total_degree=2):
     """
@@ -323,7 +328,7 @@ G = crawl_wikipedia(
     max_links=MAX_LINKS
 )
 
-G = prune_low_degree_nodes(G, min_total_degree=2)
+#G = prune_low_degree_nodes(G, min_total_degree=2)
 
 export_graph_to_json(G, "wiki_graph.json")
 
