@@ -7,8 +7,3 @@ Before beginning, ensure you have cloned this repository to your local machine.
 ```
 python ./crawl_wikipedia.py "Baseball"
 ```
-2. View the resulting corpus (`wiki_graph.json`) on the frontend by starting a Python HTTP sevrer:
-```
-python -m http.server 8000
-```
-and load it in your web browser by navigating to `localhost:8000`.
