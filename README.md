@@ -5,5 +5,8 @@ WikiView is a Python-based Wikipedia hyperlink scraper, paired with an interacti
 Before beginning, ensure you have cloned this repository to your local machine.
 1. Generate a corpus of craled Wikipedia articles from a desired starting (seed) article. For example, to start from the article for [Baseball](https://en.wikipedia.org/wiki/Baseball):
 ```
-python ./crawl_wikipedia.py "Baseball"
+python ./crawl_wikipedia.py "https://en.wikipedia.org/wiki/Baseball" <max. depth> <max. links per page>
 ```
+i.e.
+```
+python ./crawl_wikipedia.py "https://en.wikipedia.org/wiki/Baseball" 3 20
