@@ -1,6 +1,3 @@
-##### TODO:
-# Re-evaluate JSON write format/process, currently bottleneck+annoyingly slow
-
 import requests
 from bs4 import BeautifulSoup
 from collections import deque
