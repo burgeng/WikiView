@@ -5,16 +5,11 @@ import requests
 from bs4 import BeautifulSoup
 from collections import deque
 import networkx as nx
-import json
-from urllib.parse import unquote
+import urllib.robotparser
+from urllib.parse import unquote, urljoin, urlparse, urldefrag
 from networkx.algorithms.community import greedy_modularity_communities
-import orjson
 import time
 import sys
-
-headers = {
-    "User-Agent": "WikiGraphExplorer/1.0 (your_email@example.com)"
-}
 
 blocked_pages = {
     "Main_Page",
@@ -36,6 +31,36 @@ blocked_language_pages = {
     "Hanyu_Pinyin",
     "Literal_translation",
 }
+
+ROBOTS_URL = "https://en.wikipedia.org/robots.txt"
+BASE = "https://en.wikipedia.org"
+USER_AGENT = "WikiGraphBot/0.1 (personal research)"
+
+session = requests.Session() # initialize the session
+session.headers.update({
+    "User-Agent": USER_AGENT,
+    "Accept-Encoding": "gzip",
+})
+
+robots_resp = session.get(ROBOTS_URL, timeout=10) # fetch the robots.txt
+robots_resp.raise_for_status() # check status code is ok
+
+# set up robots.txt autoparsers
+rp = urllib.robotparser.RobotFileParser()
+rp.set_url(ROBOTS_URL)
+rp.parse(robots_resp.text.splitlines())
+
+#print("Robots mtime:", rp.mtime())
+#print("Can fetch Philadelphia:", rp.can_fetch(USER_AGENT, "https://en.wikipedia.org/wiki/Philadelphia"))
+#print("Can fetch as *:", rp.can_fetch("*", "https://en.wikipedia.org/wiki/Philadelphia"))
+#print(rp.default_entry)
+#print(rp.entries[:3])
+
+"""
+Respect robots.txt!
+"""
+def allowed(url: str) -> bool:
+    return rp.can_fetch(USER_AGENT, url)
 
 def update_status(pages_crawled, pages_seen, depth, max_depth, queue_size, max_pages, page):
     msg = (
@@ -96,7 +121,7 @@ def compute_community_weighted_layout(G):
 
     return pos, community_map
 
-def export_graph_to_json(G, filename="wiki_graph.json"):
+def export_graph(G, filename="wiki_graph"):
 
     data = {
         "nodes": [],
@@ -104,7 +129,7 @@ def export_graph_to_json(G, filename="wiki_graph.json"):
     }
 
     # Testing writing to dedicated viewer format
-    nx.write_gexf(G, "wiki_graph.gexf")
+    nx.write_gexf(G, f"{filename}.gexf")
 
     """
     pos, community_map = compute_community_weighted_layout(G)
@@ -149,7 +174,7 @@ def prune_low_degree_nodes(G, min_total_degree=2):
     For directed graphs, total degree = in_degree + out_degree.
     """
     start = time.perf_counter()
-    print(f"Removing nodes with total degree <= {min_total_degree}")
+    print(f"Removing nodes with total degree < {min_total_degree}")
 
     nodes_to_remove = [
         node
@@ -167,80 +192,70 @@ def prune_low_degree_nodes(G, min_total_degree=2):
 
     return G_pruned
 
-def should_skip_page(page, current_title, seed, block_language_pages=True):
-    # Always allow the seed page
-    if page == seed:
-        return False
+def extract_wiki_links(page: str, max_links: int) -> set[str]:
+    html = fetch_page(page)
 
-    if ":" in page:
-        return True
+    soup = BeautifulSoup(html, "html.parser")
+    links = set()
 
-    if "#" in page:
-        return True
+    num_links = 0
 
-    if page == current_title:
-        return True
+    for a in soup.select("a[href]"):
+        url = normalize_wiki_url(a["href"])
+        if url is not None:
+            links.add(url)
+            num_links+=1
+            if num_links >= max_links:
+                break
 
-    if "(identifier)" in page:
-        return True
+    return links
 
-    if page in blocked_pages:
-        return True
+"""
+Keep only canonical /wiki/ links
+"""
+def normalize_wiki_url(href: str) -> str | None:
+    if not href:
+        return None
 
-    # Skip language/translation pages only when this option is enabled
-    if block_language_pages:
-        if any(keyword in page for keyword in blocked_language_pages):
-            return True
+    url = urljoin(BASE, href)
+    url, _frag = urldefrag(url)
+    parsed = urlparse(url)
 
-    return False
-
-# ----------------------------------------
-# Get Wikipedia links from a page
-# ----------------------------------------
-def get_links(title, max_links):
-
-    url = f"https://en.wikipedia.org/wiki/{title}"
-    if title == SEED_LABEL:
-        print("SEED: ", title)
-
-    try:
-        response = requests.get(url, timeout=10, headers=headers)
-        if response.status_code != 200:
-            return []
-
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        links = set()
-
-        for a in soup.select("a[href^='/wiki/']"):
-
-            href = a.get("href")
-
-            # Extract page title
-            page = href.split("/wiki/")[1]
-            #print("Page: ", page)
-
-            if should_skip_page(
-                page,
-                current_title=title,
-                seed=SEED_LABEL,
-                block_language_pages=True
-            ):
-                #print("Skipping", page)
-                continue
-            
-            if len(links) >= max_links:
-                return list(links)
-            links.add(page)
-
-        return list(links)
-
-    except Exception as e:
-        print(f"Error fetching {title}: {e}")
-        return []
+    if parsed.netloc != "en.wikipedia.org":
+        return None
+    if parsed.query:
+        return None
+    if not parsed.path.startswith("/wiki/"):
+        return None
     
-def page_key(title):
-    return unquote(title).strip().replace(" ", "_").lower()
+    title = parsed.path.removeprefix("/wiki/")
+
+    if ":" in title:
+        return None
+    if title in blocked_pages or title in blocked_language_pages:
+        return None
+
+    return BASE + parsed.path
+
+def fetch_page(url: str) -> str | None:
+    if not allowed(url):
+        print(f"Blocked by robots.txt: {url}")
+        return None
+    
+    resp = session.get(url, timeout=10)
+
+    # we got rate limited
+    if resp.status_code == 429:
+        time.sleep(15)
+
+    if 500 <= resp.status_code <= 600:
+        time.sleep(60)
+    
+    if resp.status_code != 200:
+        print(f"Skipping {url}: HTTP {resp.status_code}")
+        return None
+
+    return resp.text
 
 """
 Breadth-first search wikipedia crawler.
@@ -262,9 +277,12 @@ def crawl_wikipedia(seed, depth=2, max_links=50):
 
     crawled_count = 0
 
+    #if not good_seed(seed):
+    #    return None
+
     # Start with seed page
     queue.append((seed, 0))
-    visited.add(page_key(seed)) # Normalize page name so that we don't visit seed page twice
+    visited.add(seed) # Normalize page name so that we don't visit seed page twice
 
     # while there are page(s) in the queue
     while queue:
@@ -290,19 +308,17 @@ def crawl_wikipedia(seed, depth=2, max_links=50):
             continue
 
         # Get outgoing links from current_page
-        links = get_links(current_page, max_links)
+        links = extract_wiki_links(current_page, max_links)
 
         for link in links:
 
             # Add edge to graph
             G.add_edge(current_page, link)
 
-            key = page_key(link)
-
             # Add unseen pages to BFS queue
-            if key not in visited:
+            if link not in visited:
 
-                visited.add(key)
+                visited.add(link)
 
                 # Add the page link to the queue, with a depth of current_depth+1
                 queue.append((link, current_depth + 1))
@@ -327,9 +343,9 @@ G = crawl_wikipedia(
     max_links=MAX_LINKS
 )
 
-#G = prune_low_degree_nodes(G, min_total_degree=2)
+G = prune_low_degree_nodes(G, min_total_degree=2)
 
-export_graph_to_json(G, "wiki_graph.json")
+export_graph(G, "wiki_graph")
 
 print()
 print("Done.")
