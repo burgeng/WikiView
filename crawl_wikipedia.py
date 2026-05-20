@@ -4,7 +4,6 @@ from collections import deque
 import networkx as nx
 import urllib.robotparser
 from urllib.parse import unquote, urljoin, urlparse, urldefrag
-from networkx.algorithms.community import greedy_modularity_communities
 import time
 import sys
 
@@ -47,12 +46,6 @@ rp = urllib.robotparser.RobotFileParser()
 rp.set_url(ROBOTS_URL)
 rp.parse(robots_resp.text.splitlines())
 
-#print("Robots mtime:", rp.mtime())
-#print("Can fetch Philadelphia:", rp.can_fetch(USER_AGENT, "https://en.wikipedia.org/wiki/Philadelphia"))
-#print("Can fetch as *:", rp.can_fetch("*", "https://en.wikipedia.org/wiki/Philadelphia"))
-#print(rp.default_entry)
-#print(rp.entries[:3])
-
 """
 Respect robots.txt!
 """
@@ -71,53 +64,6 @@ def update_status(pages_crawled, pages_seen, depth, max_depth, queue_size, max_p
     sys.stdout.write("\r" + msg.ljust(120))
     sys.stdout.flush()
 
-"""
-Compute the communities within the graph, 
-"""
-def compute_community_weighted_layout(G):
-    print("Computing graph layout...")
-    start = time.perf_counter()
-    undirected = G.to_undirected()
-
-    communities = list(greedy_modularity_communities(undirected))
-
-    community_map = {}
-    for i, community in enumerate(communities):
-        for node in community:
-            community_map[node] = i
-
-    # Create a copy for layout only
-    H = undirected.copy()
-
-    # Add invisible community center nodes
-    for i, community in enumerate(communities):
-        center = f"__community_{i}__"
-        H.add_node(center)
-
-        for node in community:
-            H.add_edge(center, node, weight=10) # high-weight edge that will pull connected nodes closer together 
-
-    # get positions of nodes treating edges as rsprings, higher weight = tighter spring
-    pos = nx.spring_layout(
-        H,
-        #k=0.8,             # node distance, if none calculated as 1/sqrt(len(nodes))
-        iterations=50,
-        seed=42,
-        weight="weight"
-    )
-
-    # Remove fake center nodes from final position map
-    pos = {
-        node: coords
-        for node, coords in pos.items()
-        if not str(node).startswith("__community_")
-    }
-
-    end = time.perf_counter()
-    print(f"Graph creation took {end - start:.2f} seconds")
-
-    return pos, community_map
-
 def export_graph(G, filename="wiki_graph"):
 
     data = {
@@ -127,43 +73,6 @@ def export_graph(G, filename="wiki_graph"):
 
     # Testing writing to dedicated viewer format
     nx.write_gexf(G, f"{filename}.gexf")
-
-    """
-    pos, community_map = compute_community_weighted_layout(G)
-
-    print("Writing graph to JSON...")
-    start = time.perf_counter()
-    # Add nodes
-    for node in G.nodes():
-
-        x, y = pos[node]
-        data["nodes"].append({
-            "id": node,
-            "label": unquote(node).replace("_", " "),
-            "url": f"https://en.wikipedia.org/wiki/{node}",
-            "community": community_map.get(node, -1),
-            "isSeed": SEED_LABEL == node,
-            # precomputed coordinates
-            "x": float(pos[node][0] * 8000),
-            "y": float(pos[node][1] * 8000)
-        })
-
-    # Add directed edges
-    for source, target in G.edges():
-
-        data["links"].append({
-            "source": source,
-            "target": target
-        })
-
-    # Write JSON file
-    with open(filename, "wb") as f:
-        f.write(orjson.dumps(data))
-
-    end  = time.perf_counter()
-
-    print(f"Exported graph to {filename}, took {end - start:.2f} seconds")
-    """
 
 def prune_low_degree_nodes(G, min_total_degree=2):
     """
@@ -298,8 +207,6 @@ def crawl_wikipedia(seed, depth=2, max_links=50):
             page=current_page
         )
 
-        #print(f"[Depth {current_depth}] Crawling: {current_page}")
-
         # Stop expanding beyond depth limit
         if current_depth >= depth:
             continue
@@ -322,29 +229,29 @@ def crawl_wikipedia(seed, depth=2, max_links=50):
 
     return G
 
+def main():
+    if len(sys.argv) != 4:
+        print("Usage:\tcrawl_wikipedia.py <seed page> <depth> <max links per page>")
+        sys.exit(1)
 
-# ----------------------------------------
-# Run crawler
-# ----------------------------------------
-if len(sys.argv) != 4:
-    print("Usage:\tcrawl_wikipedia.py <seed page> <depth> <max links per page>")
-    sys.exit(1)
+    SEED_LABEL = unquote(sys.argv[1]).strip().replace(" ", "_")
+    DEPTH = int(sys.argv[2])
+    MAX_LINKS = int(sys.argv[3])
 
-SEED_LABEL = unquote(sys.argv[1]).strip().replace(" ", "_")
-DEPTH = int(sys.argv[2])
-MAX_LINKS = int(sys.argv[3])
+    G = crawl_wikipedia(
+        seed=str(SEED_LABEL),
+        depth=DEPTH,
+        max_links=MAX_LINKS
+    )
 
-G = crawl_wikipedia(
-    seed=str(SEED_LABEL),
-    depth=DEPTH,
-    max_links=MAX_LINKS
-)
+    G = prune_low_degree_nodes(G, min_total_degree=2)
 
-G = prune_low_degree_nodes(G, min_total_degree=2)
+    export_graph(G, "wiki_graph")
 
-export_graph(G, "wiki_graph")
+    print()
+    print("Done.")
+    print("Nodes:", G.number_of_nodes())
+    print("Edges:", G.number_of_edges())
 
-print()
-print("Done.")
-print("Nodes:", G.number_of_nodes())
-print("Edges:", G.number_of_edges())
+if __name__ == "__main__":
+    main()
