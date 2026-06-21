@@ -6,31 +6,18 @@ import urllib.robotparser
 from urllib.parse import unquote, urljoin, urlparse, urldefrag
 import time
 import sys
+from config import load_config
 
-blocked_pages = {
-    "Main_Page",
-    "Help:Contents",
-    "Special:Search"
-}
+config = load_config()
 
-blocked_language_pages = {
-    "Chinese_language",
-    "Mandarin_Chinese",
-    "Pinyin",
-    "Standard_Chinese",
-    "Traditional_Chinese_characters",
-    "Simplified_Chinese_characters",
-    "Chinese_characters",
-    "Wade%E2%80%93Giles",
-    "Cantonese",
-    "Jyutping",
-    "Hanyu_Pinyin",
-    "Literal_translation",
-}
+ROBOTS_URL = config.robots_url
+BASE = config.base_url
+USER_AGENT = config.user_agent
 
-ROBOTS_URL = "https://en.wikipedia.org/robots.txt"
-BASE = "https://en.wikipedia.org"
-USER_AGENT = "WikiGraphBot/0.1 (personal research)"
+blocked_pages = config.blocked_pages
+
+DEPTH = config.max_depth
+MAX_LINKS = config.max_links
 
 session = requests.Session() # initialize the session
 session.headers.update({
@@ -101,18 +88,20 @@ def prune_low_degree_nodes(G, min_total_degree=2):
 def extract_wiki_links(page: str, max_links: int) -> set[str]:
     html = fetch_page(page)
 
-    soup = BeautifulSoup(html, "html.parser")
+    if html:
+        soup = BeautifulSoup(html, "html.parser")
     links = set()
 
     num_links = 0
 
-    for a in soup.select("a[href]"):
-        url = normalize_wiki_url(a["href"])
-        if url is not None:
-            links.add(url)
-            num_links+=1
-            if num_links >= max_links:
-                break
+    if soup:
+        for a in soup.select("a[href]"):
+            url = normalize_wiki_url(a["href"])
+            if url is not None:
+                links.add(url)
+                num_links+=1
+                if num_links >= max_links:
+                    break
 
     return links
 
@@ -127,18 +116,26 @@ def normalize_wiki_url(href: str) -> str | None:
     url, _frag = urldefrag(url)
     parsed = urlparse(url)
 
+    ### Initial criteria for accepting a scraped page
+    # If location of linked website is not on english wikipedia, don't add it
     if parsed.netloc != "en.wikipedia.org":
         return None
+    # Ignore any page with a query (after '?' in URL); typically wikipedia articles do not have query params
     if parsed.query:
         return None
+    # wiki articles' paths start with /wiki/
     if not parsed.path.startswith("/wiki/"):
         return None
     
+    # Remove the /wiki/ and keep the url article name
     title = parsed.path.removeprefix("/wiki/")
 
+    # ":" indicates some special page
     if ":" in title:
         return None
-    if title in blocked_pages or title in blocked_language_pages:
+    # Finally, check the blocked pages list
+    ## TODO: change this top checkfrom parsed file in .env
+    if title in blocked_pages:
         return None
 
     return BASE + parsed.path
@@ -168,7 +165,7 @@ Breadth-first search wikipedia crawler.
 
 @param seed: seed page
 @param depth: number of hops away from seed page to expand to
-@param man_links_per_page: max number of links to consider per page
+@param man_links: max number of links to consider per page
 """
 def crawl_wikipedia(seed, depth=2, max_links=50):
 
@@ -229,14 +226,18 @@ def crawl_wikipedia(seed, depth=2, max_links=50):
 
     return G
 
+"""
+Program entry point. 
+Will check cli args, initiate a crawl with those parameters, prune low degree nodes, and export the graph.
+"""
 def main():
-    if len(sys.argv) != 4:
-        print("Usage:\tcrawl_wikipedia.py <seed page> <depth> <max links per page>")
+    if len(sys.argv) != 2:
+        print("Usage:\tcrawl_wikipedia.py <seed page>")
         sys.exit(1)
 
     SEED_LABEL = unquote(sys.argv[1]).strip().replace(" ", "_")
-    DEPTH = int(sys.argv[2])
-    MAX_LINKS = int(sys.argv[3])
+    #DEPTH = int(sys.argv[2])
+    #MAX_LINKS = int(sys.argv[3])
 
     G = crawl_wikipedia(
         seed=str(SEED_LABEL),
